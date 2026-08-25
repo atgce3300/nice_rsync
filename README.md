@@ -32,3 +32,4 @@ Two notes:
 If ubuntu on the remote doesn't have passwordless sudo, change --rsync-path to --rsync-path="nice -n 19 ionice -c 3 rsync".
 
 Run the first manual test while you're watching it, then check cat /home/ubuntu/logs/backup.status after — that's your "did it succeed" single source of truth. If it still dies hours in, check the remote's dmesg/journalctl as before, because that points at hardware (USB power/thermal or RAM), which no script can fix.
+x
