@@ -12,24 +12,35 @@ nice_rsync is a wrapper script that provides:
 - **Resource friendly** - Optimized for limited resource devices
 - **Comprehensive logging** - Timestamped logs + status file
 - **Time-based scheduling** - Optional scheduler for specific time windows
+- **OOM protection** - Automatically stops if memory is too low
+
+## Scripts Comparison
+
+| Feature | nice_rsync.sh | nice_rsync_scheduler.sh | nice_rsync_stop.sh |
+|---------|---------------|------------------------|-------------------|
+| **Purpose** | Main backup script | Time-based scheduler | Emergency stop |
+| **Runs rsync** | ✅ Yes (manual) | ✅ Yes (automatic) | ❌ No |
+| **Time windows** | ❌ No | ✅ Yes | ❌ No |
+| **OOM protection** | ❌ No | ✅ Yes | ❌ No |
+| **Manual control** | ✅ Full | ✅ Partial | ✅ Full |
+
+### When to Use Each
+
+| Scenario | Script |
+|----------|--------|
+| Run backup manually at any time | `nice_rsync.sh` |
+| Run backup only during specific hours | `nice_rsync_scheduler.sh` |
+| Emergency stop - immediately halt all | `nice_rsync_stop.sh` |
 
 ## Quick Start
 
 ```bash
-# Copy scripts
+# Copy all scripts
 cp nice_rsync.sh /home/ubuntu/nice_rsync.sh
 cp nice_rsync_scheduler.sh /home/ubuntu/nice_rsync_scheduler.sh
 cp nice_rsync_stop.sh /home/ubuntu/nice_rsync_stop.sh
 chmod +x /home/ubuntu/nice_rsync*.sh
 ```
-
-## Scripts Included
-
-| Script | Purpose |
-|--------|---------|
-| `nice_rsync.sh` | Main rsync backup script |
-| `nice_rsync_scheduler.sh` | Time-based scheduler (runs during specific hours) |
-| `nice_rsync_stop.sh` | Stop running rsync processes |
 
 ## Resource-Based Settings
 
@@ -42,22 +53,6 @@ Choose the settings that match your device capabilities:
 | **2GB** | 1500 KB/s | Normal devices |
 | **4GB+** | 2000+ KB/s | Powerful devices |
 
-### Recommended Settings
-
-```bash
-# For 512MB RAM
-BWLIMIT="500"
-
-# For 1GB RAM
-BWLIMIT="1000"
-
-# For 2GB RAM
-BWLIMIT="1500"
-
-# For 4GB+ RAM
-BWLIMIT="2000"
-```
-
 ## Source Drive Settings
 
 ### Recommended: Read-Only Source
@@ -69,25 +64,11 @@ For maximum safety, mount source as read-only:
 mount -o ro /dev/sdX /media/toshiba2025
 ```
 
-#### Benefits of Read-Only Source
-
-| Benefit | Description |
-|---------|-------------|
-| **Consistent data** | Files don't change during transfer |
-| **Point-in-time snapshot** | Exact copy at backup time |
-| **Safety** | Protects against accidental deletion |
-
-#### When Read-Only is Not Practical
-
-If source must be writable:
-- Stop apps writing to drive before backup
-- Run backup during idle periods
-
 ## Time-Based Scheduling
 
 ### Overview
 
-The scheduler (`nice_rsync_scheduler.sh`) runs nice_rsync only during specific time windows.
+The scheduler (`nice_rsync_scheduler.sh`) runs nice_rsync only during specific time windows. It also includes **OOM protection** to automatically stop rsync if memory is too low.
 
 ### Configuration
 
@@ -116,10 +97,20 @@ ALLOWED_WINDOWS="03:00-05:00 14:00-16:00"
 | Late night only | `23:00-02:00` |
 | Business hours | `09:00-17:00` |
 
+### OOM Protection
+
+The scheduler includes automatic memory protection:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `OOM_THRESHOLD_MB` | 100 MB | Stop rsync if free memory below this |
+
+If available memory drops below the threshold, the scheduler will automatically stop the running rsync process to prevent system crash.
+
 ### Using the Scheduler
 
 ```bash
-# Start scheduler
+# Start scheduler (runs in background)
 nohup /home/ubuntu/nice_rsync_scheduler.sh > /dev/null 2>&1 &
 
 # Check if running
@@ -129,44 +120,91 @@ ps aux | grep scheduler
 tail -f /home/ubuntu/logs/scheduler-*.log
 ```
 
-### Stopping the Scheduler
+## How to Run the Scheduler
+
+### Step 1: Configure Time Windows
+
+Edit `nice_rsync_scheduler.sh`:
 
 ```bash
-# Use the stop script
-/home/ubuntu/nice_rsync_stop.sh
+ALLOWED_WINDOWS="03:00-05:00 14:00-16:00"
+```
 
-# Or manually
+### Step 2: Start the Scheduler
+
+```bash
+# Make executable
+chmod +x nice_rsync_scheduler.sh
+
+# Start (runs forever in background)
+nohup ./nice_rsync_scheduler.sh > scheduler.log 2>&1 &
+```
+
+### Step 3: Monitor
+
+```bash
+# Check if running
+ps aux | grep scheduler
+
+# View logs
+tail -f /home/ubuntu/logs/scheduler-YYYYMMDD.log
+```
+
+## How to Stop the Scheduler
+
+### Method 1: Use Stop Script (Recommended)
+
+```bash
+# Stop both scheduler AND any running rsync
+./nice_rsync_stop.sh
+```
+
+### Method 2: Manual Stop
+
+```bash
+# Kill scheduler
 pkill -f "nice_rsync_scheduler"
+
+# Kill rsync
 pkill -f "nice_rsync.sh"
 ```
 
-## Usage
+### Method 3: Graceful Stop (via Scheduler)
 
-### Direct Run
-
-```bash
-# Manual run
-/home/ubuntu/nice_rsync.sh
-```
-
-### Run in TMUX
+The scheduler automatically stops rsync when outside the time window. Wait for the window to end, or:
 
 ```bash
-# Start in tmux
-tmux new -d -s backup '/home/ubuntu/nice_rsync.sh'
-
-# Watch progress
-tmux attach -t backup
+# Change ALLOWED_WINDOWS to empty, then restart scheduler
+ALLOWED_WINDOWS=""
+# Then: pkill -f scheduler; nohup ./scheduler.sh &
 ```
 
-### Run via Cron
+## Running Both Scheduler and Stop Script
+
+### Workflow
+
+1. **Start Scheduler** - Runs automatically during allowed times
+2. **Monitor** - Check logs for status
+3. **Emergency Stop** - Use stop script if needed
 
 ```bash
-crontab -e
+# Start scheduler
+nohup ./nice_rsync_scheduler.sh > /dev/null 2>&1 &
 
-# Add this line (runs at 3 AM daily)
-0 3 * * * /home/ubuntu/nice_rsync.sh
+# Later... if you need to stop immediately
+./nice_rsync_stop.sh
 ```
+
+### Status Commands
+
+| Action | Command |
+|--------|---------|
+| Check scheduler status | `ps aux \| grep scheduler` |
+| Check rsync status | `ps aux \| grep nice_rsync` |
+| View scheduler logs | `tail -f /home/ubuntu/logs/scheduler-*.log` |
+| View rsync logs | `tail -f /home/ubuntu/logs/rsync-*.log` |
+| Check backup status | `cat /home/ubuntu/logs/backup.status` |
+| Emergency stop | `./nice_rsync_stop.sh` |
 
 ## Checking Status
 
@@ -209,15 +247,6 @@ On the remote server, ensure:
 1. SSH key is authorized
 2. rsync is installed
 3. User has sudo access (for nice/ionice)
-
-If no passwordless sudo, modify `--rsync-path`:
-```bash
-# Original
---rsync-path="sudo nice -n 19 ionice -c 3 rsync"
-
-# Alternative (no sudo)
---rsync-path="nice -n 19 ionice -c 3 rsync"
-```
 
 ## Author
 
